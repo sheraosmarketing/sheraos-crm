@@ -784,7 +784,24 @@ async function checkInstanceSilence() {
       if (hoursSince < 3) continue
       if (hoursSince < 12 && !(isBusinessHours && isWeekday)) continue // fora horario, so alerta se >12h
 
-      // Verifica se Evolution TAMBEM esta silenciosa (= WhatsApp offline) ou se so o CRM parou (= webhook broken)
+      // Checa o connectionState REAL da instancia no Baileys (verdade absoluta) antes de
+      // inferir queda por silencio. Uma instancia com state=open que so nao recebe msgs
+      // NUNCA deve ser marcada como disconnected (contas pequenas ficam 12-24h+ silenciosas
+      // normalmente). Antes esse fluxo assumia queda so pelo silencio -> falso positivo em
+      // contas de baixo volume tipo Alpha Tintas.
+      let evoState = null
+      try {
+        const rs = await fetch(`${inst.api_url}/instance/connectionState/${encodeURIComponent(inst.instance_name)}`, {
+          headers: { apikey: inst.api_key },
+          timeout: 8000,
+        })
+        if (rs.ok) {
+          const js = await rs.json()
+          evoState = js?.instance?.state || js?.state || null
+        }
+      } catch (e) { /* evoState fica null -> tratado como UNREACHABLE */ }
+
+      // Verifica se Evolution TAMBEM esta silenciosa (indicativo secundario)
       let evoLastTs = null
       try {
         const r = await fetch(`${inst.api_url}/chat/findMessages/${encodeURIComponent(inst.instance_name)}`, {
@@ -801,20 +818,38 @@ async function checkInstanceSilence() {
       } catch (e) { /* ignora */ }
 
       const evoHoursSince = evoLastTs ? (Date.now() - evoLastTs) / 3600000 : null
-      const kind = evoHoursSince == null
-        ? 'EVOLUTION_UNREACHABLE'
-        : (evoHoursSince > 3
-          ? 'WHATSAPP_OFFLINE'  // Evolution tb parado = WhatsApp disconectou (precisa QR)
-          : 'WEBHOOK_BROKEN')    // Evolution recebe mas CRM nao = webhook problema
 
-      console.warn(`[InstanceSilence] ⚠️  ${inst.account_name}/${inst.instance_name}: sem msgs ha ${hoursSince.toFixed(1)}h (Evolution: ${evoHoursSince == null ? 'N/A' : evoHoursSince.toFixed(1) + 'h'}) — motivo=${kind}`)
+      // ─── Classificacao ───
+      // Se evoState nao esta 'open' -> WhatsApp REALMENTE caiu (precisa QR)
+      // Se evoState='open' e Evolution silenciosa (>3h) -> silencio real da conta (nao caiu)
+      // Se evoState='open' e Evolution tem msgs recentes mas CRM nao -> webhook quebrado
+      // Se evoState=null (nao respondeu) -> Evolution inatingivel
+      let kind, newStatus
+      if (evoState === null) {
+        kind = 'EVOLUTION_UNREACHABLE'
+        newStatus = 'silence_warning'  // nao marca disconnected sem certeza
+      } else if (evoState !== 'open' && evoState !== 'connected') {
+        kind = 'WHATSAPP_OFFLINE'  // Baileys reportou queda real
+        newStatus = 'disconnected'
+      } else if (evoHoursSince != null && evoHoursSince <= 1) {
+        kind = 'WEBHOOK_BROKEN'  // Evolution ativa, CRM sem msgs -> problema de webhook
+        newStatus = 'silence_warning'
+      } else {
+        kind = 'NATURAL_SILENCE'  // Baileys open, Evolution tb silenciosa -> conta de baixo volume
+        newStatus = 'silence_warning'  // aviso amarelo, nao vermelho
+      }
+
+      console.warn(`[InstanceSilence] ⚠️  ${inst.account_name}/${inst.instance_name}: sem msgs ha ${hoursSince.toFixed(1)}h (Evolution msgs: ${evoHoursSince == null ? 'N/A' : evoHoursSince.toFixed(1) + 'h'}, state: ${evoState || 'unreachable'}) — motivo=${kind} -> status=${newStatus}`)
 
       // Marca instancia com status pra UI destacar visualmente
-      const newStatus = kind === 'WHATSAPP_OFFLINE' ? 'disconnected' : 'silence_warning'
       if (inst.status !== newStatus) {
         db.prepare("UPDATE whatsapp_instances SET status = ?, paused_reason = ?, updated_at = datetime('now') WHERE id = ?")
           .run(newStatus, `[${kind}] Sem msgs ha ${hoursSince.toFixed(1)}h em ${new Date().toISOString()}`, inst.id)
       }
+
+      // Se e NATURAL_SILENCE (WhatsApp ok, so nao teve msg), pula alerta em analyst_alerts.
+      // Evita bombardear o dashboard com alerta pra conta pequena que fica quieta a noite.
+      if (kind === 'NATURAL_SILENCE') continue
 
       // Alerta em analyst_alerts pra ficar visivel no dashboard
       try {
