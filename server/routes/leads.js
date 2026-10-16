@@ -41,8 +41,9 @@ router.get('/', (req, res) => {
   if (!req.accountId) return res.status(400).json({ error: 'account_id required' })
 
   const { stage_id, attendant_id, instance_id, funnel_id, source, tag, city, search, date_from, date_to, show_archived, anuncio, page = '1', limit: rawLimit = '50' } = req.query
-  // FASE 2 — clamp limit em 200 pra evitar DoS trivial via ?limit=999999
-  const limit = Math.max(1, Math.min(200, parseInt(rawLimit) || 50))
+  // Teto generoso pra permitir montar broadcasts gigantes (importados em massa).
+  // Payload de 5000 leads magros (~500KB) continua tranquilo. Clamp impede DoS por ?limit=999999.
+  const limit = Math.max(1, Math.min(5000, parseInt(rawLimit) || 50))
   const where = ['l.account_id = ?', 'l.is_active = 1', 'l.is_blocked = 0']
   const params = [req.accountId]
 

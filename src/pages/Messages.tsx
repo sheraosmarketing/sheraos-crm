@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAccount } from '../context/AccountContext'
-import { fetchBroadcasts, fetchLeads, createBroadcast, sendBroadcast, cancelScheduledBroadcast, pauseBroadcast, resumeBroadcast, cancelBroadcast, fetchTags, fetchFunnels, fetchWhatsAppInstances, fetchBroadcastCloneData, fetchUsers, type Broadcast, type Lead, type Tag, type Funnel, type WhatsAppInstance, type User } from '../lib/api'
+import { fetchBroadcasts, fetchLeads, createBroadcast, sendBroadcast, cancelScheduledBroadcast, pauseBroadcast, resumeBroadcast, cancelBroadcast, fetchTags, fetchFunnels, fetchWhatsAppInstances, fetchBroadcastCloneData, fetchUsers, fetchLeadSources, type Broadcast, type Lead, type Tag, type Funnel, type WhatsAppInstance, type User } from '../lib/api'
 import { MessageCircle, Plus, Send, CheckCircle, Clock, Trash2, Filter, Tag as TagIcon, GitBranch, Smartphone, AlertTriangle, Eye, PauseCircle, Copy, UserCog, Pause, Play, XCircle, Square, Image as ImageIcon, Paperclip, X } from 'lucide-react'
 import { parseSqlDate } from '../lib/dates'
 
@@ -51,6 +51,8 @@ export default function Messages() {
   const [filterTags, setFilterTags] = useState<number[]>([])
   const [filterStages, setFilterStages] = useState<number[]>([])
   const [filterAttendants, setFilterAttendants] = useState<number[]>([])
+  const [filterSources, setFilterSources] = useState<string[]>([])
+  const [sources, setSources] = useState<string[]>([])
   const [users, setUsers] = useState<User[]>([])
   const [creating, setCreating] = useState(false)
   const [duplicating, setDuplicating] = useState(false)
@@ -85,6 +87,7 @@ export default function Messages() {
         const connected = insts.find(i => i.status === 'connected')
         if (connected && !newInstanceId) setNewInstanceId(connected.id)
       }).catch(() => {})
+      fetchLeadSources(accountId).then(setSources).catch(() => {})
     }
   }, [showNew, accountId])
 
@@ -92,20 +95,25 @@ export default function Messages() {
     if (!accountId) return
     const queries: Promise<{ leads: Lead[] }>[] = []
 
-    // Combina resultados: para cada tag selecionada faz uma query, para cada etapa idem
+    // Combina resultados: para cada filtro selecionado faz uma query, depois dedupe.
+    // Limit 3000: cobre bases grandes de import (ex: Pousada Di Venezia tem 2.668).
+    const LIMIT_PER_QUERY = 3000
     if (filterTags.length > 0) {
-      queries.push(...filterTags.map(tagId => fetchLeads(accountId, { tag: tagId, limit: 500 })))
+      queries.push(...filterTags.map(tagId => fetchLeads(accountId, { tag: tagId, limit: LIMIT_PER_QUERY })))
     }
     if (filterStages.length > 0) {
-      queries.push(...filterStages.map(stageId => fetchLeads(accountId, { stage_id: stageId, limit: 500 })))
+      queries.push(...filterStages.map(stageId => fetchLeads(accountId, { stage_id: stageId, limit: LIMIT_PER_QUERY })))
+    }
+    if (filterSources.length > 0) {
+      queries.push(...filterSources.map(s => fetchLeads(accountId, { source: s, limit: LIMIT_PER_QUERY })))
     }
     if (filterAttendants.length > 0 && queries.length === 0) {
       // Se SO atendente esta filtrado, pede leads desse atendente direto.
       // Se houver outros filtros, atendente vira filtro client-side no merged abaixo.
-      queries.push(...filterAttendants.map(uid => fetchLeads(accountId, { attendant_id: uid, limit: 500 })))
+      queries.push(...filterAttendants.map(uid => fetchLeads(accountId, { attendant_id: uid, limit: LIMIT_PER_QUERY })))
     }
     if (queries.length === 0 && leadSearch.length > 1) {
-      queries.push(fetchLeads(accountId, { search: leadSearch, limit: 500 }))
+      queries.push(fetchLeads(accountId, { search: leadSearch, limit: LIMIT_PER_QUERY }))
     } else if (queries.length > 0 && leadSearch.length > 1) {
       // Filtra texto sobre o resultado depois (busca client-side)
     }
@@ -119,11 +127,11 @@ export default function Messages() {
       all.forEach(r => r.leads.forEach(l => map.set(l.id, l)))
       let merged = Array.from(map.values()).filter(l => l.phone)
       // Filtro de atendente client-side quando ha outros filtros (intersecao)
-      if (filterAttendants.length > 0 && (filterTags.length > 0 || filterStages.length > 0)) {
+      if (filterAttendants.length > 0 && (filterTags.length > 0 || filterStages.length > 0 || filterSources.length > 0)) {
         merged = merged.filter(l => l.attendant_id != null && filterAttendants.includes(l.attendant_id))
       }
       // Aplica busca de texto sobre o set unificado quando ha filtros
-      if (leadSearch.length > 1 && (filterTags.length > 0 || filterStages.length > 0 || filterAttendants.length > 0)) {
+      if (leadSearch.length > 1 && (filterTags.length > 0 || filterStages.length > 0 || filterAttendants.length > 0 || filterSources.length > 0)) {
         const q = leadSearch.toLowerCase()
         merged = merged.filter(l => (l.name || '').toLowerCase().includes(q) || (l.phone || '').includes(q))
       }
@@ -133,9 +141,9 @@ export default function Messages() {
 
   useEffect(() => {
     if (!accountId) return
-    if (leadSearch.length > 1 || filterTags.length > 0 || filterStages.length > 0 || filterAttendants.length > 0) searchLeads()
+    if (leadSearch.length > 1 || filterTags.length > 0 || filterStages.length > 0 || filterAttendants.length > 0 || filterSources.length > 0) searchLeads()
     else setSearchResults([])
-  }, [leadSearch, filterTags.join(','), filterStages.join(','), filterAttendants.join(','), accountId])
+  }, [leadSearch, filterTags.join(','), filterStages.join(','), filterAttendants.join(','), filterSources.join(','), accountId])
 
   const toggleLead = (lead: Lead) => {
     setSelectedLeads(prev => prev.some(l => l.id === lead.id) ? prev.filter(l => l.id !== lead.id) : [...prev, lead])
@@ -151,6 +159,7 @@ export default function Messages() {
   const toggleTag = (id: number) => setFilterTags(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
   const toggleStage = (id: number) => setFilterStages(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
   const toggleAttendant = (id: number) => setFilterAttendants(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
+  const toggleSource = (s: string) => setFilterSources(prev => prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s])
 
   const totalMessagesCount = 1 + newVariations.filter(v => v.trim()).length
   const enoughVariations = totalMessagesCount >= MIN_VARIATIONS
@@ -164,7 +173,7 @@ export default function Messages() {
     setShowNew(false); setStep(1); setNewName(''); setNewTemplate('')
     setNewVariations(['', '']); setNewDelay(DEFAULT_DELAY); setNewInstanceId('')
     setScheduleEnabled(false); setScheduledAt('')
-    setSelectedLeads([]); setLeadSearch(''); setFilterTags([]); setFilterStages([])
+    setSelectedLeads([]); setLeadSearch(''); setFilterTags([]); setFilterStages([]); setFilterSources([]); setFilterAttendants([])
     setCloneNotice(null)
     setMediaBase64(''); setMediaMime(''); setMediaFilename(''); setMediaPreviewUrl(''); setMediaError('')
   }
@@ -665,8 +674,34 @@ export default function Messages() {
                   </div>
                 )}
 
-                {(filterTags.length > 0 || filterStages.length > 0 || filterAttendants.length > 0) && (
-                  <button className="btn btn-secondary btn-sm" onClick={() => { setFilterTags([]); setFilterStages([]); setFilterAttendants([]) }} style={{ fontSize: 10, marginBottom: 8 }}>
+                {/* Fontes como chips multi-select */}
+                {sources.length > 0 && (
+                  <div style={{ marginBottom: 10 }}>
+                    <label style={{ fontSize: 11, color: '#9B96B0', display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4 }}>
+                      <TagIcon size={11} /> Filtrar por fonte {filterSources.length > 0 && <span style={{ color: '#FFB300' }}>({filterSources.length} ativa{filterSources.length > 1 ? 's' : ''})</span>}
+                    </label>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                      {sources.map(s => {
+                        const active = filterSources.includes(s)
+                        return (
+                          <button key={s} type="button" onClick={() => toggleSource(s)}
+                            style={{
+                              padding: '4px 10px', borderRadius: 12, fontSize: 11, cursor: 'pointer',
+                              border: `1px solid ${active ? '#60E5EA' : 'rgba(255,255,255,0.1)'}`,
+                              background: active ? 'rgba(96,229,234,0.15)' : 'rgba(255,255,255,0.03)',
+                              color: active ? '#60E5EA' : '#9B96B0',
+                              fontWeight: active ? 600 : 400,
+                            }}>
+                            {active ? '✓ ' : ''}{s}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {(filterTags.length > 0 || filterStages.length > 0 || filterAttendants.length > 0 || filterSources.length > 0) && (
+                  <button className="btn btn-secondary btn-sm" onClick={() => { setFilterTags([]); setFilterStages([]); setFilterAttendants([]); setFilterSources([]) }} style={{ fontSize: 10, marginBottom: 8 }}>
                     <Filter size={10} /> Limpar filtros
                   </button>
                 )}
@@ -691,8 +726,8 @@ export default function Messages() {
                       {l.stage_name && <span style={{ fontSize: 10, color: l.stage_color || '#FFB300', marginLeft: 'auto' }}>{l.stage_name}</span>}
                     </label>
                   ))}
-                  {searchResults.length === 0 && (leadSearch.length > 1 || filterTags.length > 0 || filterStages.length > 0 || filterAttendants.length > 0) && <div style={{ padding: 20, textAlign: 'center', color: '#6B6580' }}>Nenhum lead encontrado neste filtro</div>}
-                  {searchResults.length === 0 && leadSearch.length <= 1 && filterTags.length === 0 && filterStages.length === 0 && filterAttendants.length === 0 && <div style={{ padding: 20, textAlign: 'center', color: '#6B6580' }}>Selecione tags, etapas, atendentes, ou digite pra buscar...</div>}
+                  {searchResults.length === 0 && (leadSearch.length > 1 || filterTags.length > 0 || filterStages.length > 0 || filterAttendants.length > 0 || filterSources.length > 0) && <div style={{ padding: 20, textAlign: 'center', color: '#6B6580' }}>Nenhum lead encontrado neste filtro</div>}
+                  {searchResults.length === 0 && leadSearch.length <= 1 && filterTags.length === 0 && filterStages.length === 0 && filterAttendants.length === 0 && filterSources.length === 0 && <div style={{ padding: 20, textAlign: 'center', color: '#6B6580' }}>Selecione tags, etapas, atendentes, fontes, ou digite pra buscar...</div>}
                 </div>
                 {selectedLeads.length > 0 && (
                   <div style={{ marginTop: 6, padding: '6px 10px', background: 'rgba(255,179,0,0.05)', borderRadius: 6, fontSize: 11, color: '#9B96B0' }}>
