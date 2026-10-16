@@ -220,7 +220,19 @@ export default function BroadcastDetail() {
 
       {/* Mensagem */}
       <div className="card" style={{ padding: 16, marginBottom: 16 }}>
-        <div style={{ fontSize: 12, color: '#9B96B0', marginBottom: 6 }}>Mensagem principal</div>
+        {broadcast.media_base64 && broadcast.media_mime && (
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ fontSize: 12, color: '#9B96B0', marginBottom: 6 }}>Anexo {broadcast.media_filename ? `· ${broadcast.media_filename}` : ''}</div>
+            {broadcast.media_mime.startsWith('image/') ? (
+              <img src={`data:${broadcast.media_mime};base64,${broadcast.media_base64}`} alt="anexo" style={{ maxWidth: 240, maxHeight: 200, borderRadius: 6, display: 'block' }} />
+            ) : broadcast.media_mime.startsWith('video/') ? (
+              <video src={`data:${broadcast.media_mime};base64,${broadcast.media_base64}`} controls style={{ maxWidth: 280, maxHeight: 200, borderRadius: 6 }} />
+            ) : (
+              <div style={{ fontSize: 12, color: '#9B96B0' }}>📄 {broadcast.media_mime}</div>
+            )}
+          </div>
+        )}
+        <div style={{ fontSize: 12, color: '#9B96B0', marginBottom: 6 }}>{broadcast.media_base64 ? 'Legenda (vai junto com o anexo)' : 'Mensagem principal'}</div>
         <div style={{ background: 'rgba(255,255,255,0.03)', padding: 10, borderRadius: 6, fontSize: 12, whiteSpace: 'pre-wrap' }}>{broadcast.message_template}</div>
         {broadcast.message_variations && (() => {
           try {

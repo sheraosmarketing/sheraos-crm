@@ -27,8 +27,24 @@ router.get('/', requireRole('super_admin', 'gerente'), (req, res) => {
 // Create broadcast
 router.post('/', requireRole('super_admin', 'gerente'), (req, res) => {
   if (!req.accountId) return res.status(400).json({ error: 'account_id required' })
-  const { name, message_template, message_variations, media_url, lead_ids, delay_seconds, instance_id, scheduled_at } = req.body
+  const { name, message_template, message_variations, media_url, media_base64, media_mime, media_filename, lead_ids, delay_seconds, instance_id, scheduled_at } = req.body
   if (!name || !message_template) return res.status(400).json({ error: 'name e message_template obrigatorios' })
+
+  // Validacao de midia: limite 5MB base64 (~3.75MB real), tipos permitidos
+  if (media_base64) {
+    if (!media_mime || typeof media_mime !== 'string') {
+      return res.status(400).json({ error: 'media_mime obrigatorio quando enviar anexo' })
+    }
+    const ALLOWED = ['image/', 'video/', 'application/pdf']
+    if (!ALLOWED.some(p => media_mime.startsWith(p))) {
+      return res.status(400).json({ error: 'Tipo de arquivo nao permitido. Use imagem, video ou PDF.' })
+    }
+    const approxBytes = Math.floor(media_base64.length * 0.75)
+    const MAX = media_mime.startsWith('video/') ? 16 * 1024 * 1024 : 5 * 1024 * 1024
+    if (approxBytes > MAX) {
+      return res.status(413).json({ error: `Arquivo excede ${Math.floor(MAX / 1024 / 1024)}MB` })
+    }
+  }
 
   // Valida instancia (deve existir e pertencer a conta)
   if (!instance_id) return res.status(400).json({ error: 'Selecione um numero de saida (instancia WhatsApp)' })
@@ -61,9 +77,9 @@ router.post('/', requireRole('super_admin', 'gerente'), (req, res) => {
   }
 
   const result = db.prepare(`
-    INSERT INTO broadcasts (account_id, name, message_template, message_variations, delay_seconds, media_url, total_count, created_by, instance_id, status, scheduled_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(req.accountId, name, message_template, variationsJson, delay, media_url || null, lead_ids?.length || 0, req.user.id, instance_id, initialStatus, scheduledAtISO)
+    INSERT INTO broadcasts (account_id, name, message_template, message_variations, delay_seconds, media_url, media_base64, media_mime, media_filename, total_count, created_by, instance_id, status, scheduled_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(req.accountId, name, message_template, variationsJson, delay, media_url || null, media_base64 || null, media_mime || null, media_filename || null, lead_ids?.length || 0, req.user.id, instance_id, initialStatus, scheduledAtISO)
 
   // Add recipients (only opted-in leads)
   let skippedNoOptin = 0
@@ -108,6 +124,9 @@ router.get('/:id/clone-data', requireRole('super_admin', 'gerente'), (req, res) 
       message_template: broadcast.message_template,
       message_variations: variations,
       media_url: broadcast.media_url || null,
+      media_base64: broadcast.media_base64 || null,
+      media_mime: broadcast.media_mime || null,
+      media_filename: broadcast.media_filename || null,
       delay_seconds: broadcast.delay_seconds,
       instance_id: broadcast.instance_id,
       leads: validLeads, // objetos completos pra o front popular selectedLeads direto
@@ -259,8 +278,17 @@ async function runBroadcastLoopInner(broadcastId) {
         .replace(/\{\{phone\}\}/g, lead?.phone || '')
         .replace(/\{\{telefone\}\}/g, lead?.phone || '')
       // skipValidation=true porque o pre-flight bulk ja rodou antes do while.
-      // leadId pra cap por lead/dia.
-      const sendRes = await sendViaInstance(liveInstance, r.phone, text, { skipValidation: true, leadId: r.lead_id })
+      // leadId pra cap por lead/dia. media (se tiver) vai como anexo + caption=text.
+      const mediaOpt = (broadcast.media_base64 && broadcast.media_mime) ? {
+        base64: broadcast.media_base64,
+        mime: broadcast.media_mime,
+        fileName: broadcast.media_filename || undefined,
+      } : null
+      const sendRes = await sendViaInstance(liveInstance, r.phone, text, {
+        skipValidation: true,
+        leadId: r.lead_id,
+        media: mediaOpt,
+      })
 
       if (sendRes.ok && sendRes.wamsgId) {
         db.prepare("UPDATE broadcast_recipients SET status = 'sent', wa_msg_id = ?, sent_at = datetime('now') WHERE id = ?").run(sendRes.wamsgId, r.id)

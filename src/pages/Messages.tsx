@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAccount } from '../context/AccountContext'
 import { fetchBroadcasts, fetchLeads, createBroadcast, sendBroadcast, cancelScheduledBroadcast, pauseBroadcast, resumeBroadcast, cancelBroadcast, fetchTags, fetchFunnels, fetchWhatsAppInstances, fetchBroadcastCloneData, fetchUsers, type Broadcast, type Lead, type Tag, type Funnel, type WhatsAppInstance, type User } from '../lib/api'
-import { MessageCircle, Plus, Send, CheckCircle, Clock, Trash2, Filter, Tag as TagIcon, GitBranch, Smartphone, AlertTriangle, Eye, PauseCircle, Copy, UserCog, Pause, Play, XCircle, Square } from 'lucide-react'
+import { MessageCircle, Plus, Send, CheckCircle, Clock, Trash2, Filter, Tag as TagIcon, GitBranch, Smartphone, AlertTriangle, Eye, PauseCircle, Copy, UserCog, Pause, Play, XCircle, Square, Image as ImageIcon, Paperclip, X } from 'lucide-react'
 import { parseSqlDate } from '../lib/dates'
 
 const STATUS_MAP: Record<string, { label: string; color: string }> = {
@@ -56,6 +56,11 @@ export default function Messages() {
   const [duplicating, setDuplicating] = useState(false)
   const [cloneNotice, setCloneNotice] = useState<string | null>(null)
   const [showSelectedList, setShowSelectedList] = useState(false)
+  const [mediaBase64, setMediaBase64] = useState<string>('')
+  const [mediaMime, setMediaMime] = useState<string>('')
+  const [mediaFilename, setMediaFilename] = useState<string>('')
+  const [mediaPreviewUrl, setMediaPreviewUrl] = useState<string>('')
+  const [mediaError, setMediaError] = useState<string>('')
 
   const load = () => { if (accountId) { setLoading(true); fetchBroadcasts(accountId).then(setBroadcasts).finally(() => setLoading(false)) } }
   useEffect(load, [accountId])
@@ -161,6 +166,40 @@ export default function Messages() {
     setScheduleEnabled(false); setScheduledAt('')
     setSelectedLeads([]); setLeadSearch(''); setFilterTags([]); setFilterStages([])
     setCloneNotice(null)
+    setMediaBase64(''); setMediaMime(''); setMediaFilename(''); setMediaPreviewUrl(''); setMediaError('')
+  }
+
+  const MAX_IMAGE_BYTES = 5 * 1024 * 1024 // 5MB real
+  const MAX_VIDEO_BYTES = 16 * 1024 * 1024 // 16MB real (limite WhatsApp)
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setMediaError('')
+    const f = e.target.files?.[0]
+    if (!f) return
+    const isImg = f.type.startsWith('image/')
+    const isVid = f.type.startsWith('video/')
+    const isPdf = f.type === 'application/pdf'
+    if (!isImg && !isVid && !isPdf) {
+      setMediaError('Tipo nao permitido. Use imagem, video ou PDF.'); return
+    }
+    const max = isVid ? MAX_VIDEO_BYTES : MAX_IMAGE_BYTES
+    if (f.size > max) {
+      setMediaError(`Arquivo acima do limite (${Math.floor(max / 1024 / 1024)}MB)`); return
+    }
+    const reader = new FileReader()
+    reader.onload = () => {
+      const dataUrl = String(reader.result || '')
+      // dataUrl: "data:image/jpeg;base64,XXXXX"
+      const base64 = dataUrl.split(',')[1] || ''
+      setMediaBase64(base64)
+      setMediaMime(f.type)
+      setMediaFilename(f.name)
+      setMediaPreviewUrl(dataUrl)
+    }
+    reader.onerror = () => setMediaError('Erro lendo arquivo')
+    reader.readAsDataURL(f)
+  }
+  const clearMedia = () => {
+    setMediaBase64(''); setMediaMime(''); setMediaFilename(''); setMediaPreviewUrl(''); setMediaError('')
   }
 
   // Valida agendamento: precisa ser parsable e >= agora+1min (margem pra evitar race com scheduler)
@@ -185,6 +224,9 @@ export default function Messages() {
         delay_seconds: newDelay, lead_ids: selectedLeads.map(l => l.id),
         instance_id: Number(newInstanceId),
         scheduled_at: scheduledISO,
+        media_base64: mediaBase64 || undefined,
+        media_mime: mediaMime || undefined,
+        media_filename: mediaFilename || undefined,
       })
       resetForm(); load()
     } catch (e: any) { alert('Erro: ' + e.message) }
@@ -240,6 +282,15 @@ export default function Messages() {
       setNewVariations(vars)
       setNewDelay(data.clone.delay_seconds || DEFAULT_DELAY)
       setNewInstanceId(data.clone.instance_id || '')
+      // Pre-popula anexo se o original tinha
+      if (data.clone.media_base64 && data.clone.media_mime) {
+        setMediaBase64(data.clone.media_base64)
+        setMediaMime(data.clone.media_mime)
+        setMediaFilename(data.clone.media_filename || '')
+        setMediaPreviewUrl(`data:${data.clone.media_mime};base64,${data.clone.media_base64}`)
+      } else {
+        clearMedia()
+      }
       setSelectedLeads(data.clone.leads)
       setShowSelectedList(true) // ja abre a lista expandida no step 2
       // Reseta filtros e busca pra evitar confusao no step 2
@@ -398,11 +449,44 @@ export default function Messages() {
 
                 <div className="form-group"><label>Nome do disparo</label><input className="input" value={newName} onChange={e => setNewName(e.target.value)} placeholder="Ex: Promo Marco 2026" /></div>
                 <div className="form-group">
-                  <label>Mensagem principal</label>
-                  <textarea className="input" rows={3} value={newTemplate} onChange={e => setNewTemplate(e.target.value)} placeholder="Ola {{nome}}, temos uma oferta especial..." />
+                  <label>Mensagem principal {mediaBase64 && <span style={{ fontSize: 11, color: '#FBBC04', marginLeft: 6 }}>(vira legenda do anexo)</span>}</label>
+                  <textarea className="input" rows={5} value={newTemplate} onChange={e => setNewTemplate(e.target.value)} placeholder="Ola {{nome}}, temos uma oferta especial... (pode usar quebras de linha com Enter)" />
                   <div style={{ fontSize: 11, color: '#9B96B0', marginTop: 4 }}>
                     Variaveis disponiveis: <code style={{ color: '#FFB300' }}>{'{{nome}}'}</code> <code style={{ color: '#FFB300' }}>{'{{primeiro_nome}}'}</code> <code style={{ color: '#FFB300' }}>{'{{empresa}}'}</code> <code style={{ color: '#FFB300' }}>{'{{cidade}}'}</code> <code style={{ color: '#FFB300' }}>{'{{telefone}}'}</code>
                   </div>
+                </div>
+
+                {/* Anexo (imagem, video ou PDF) */}
+                <div className="form-group" style={{ marginTop: 8 }}>
+                  <label>Anexo (opcional)</label>
+                  {!mediaBase64 ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <label className="btn btn-secondary btn-sm" style={{ cursor: 'pointer', margin: 0 }}>
+                        <Paperclip size={14} /> Anexar imagem, video ou PDF
+                        <input type="file" accept="image/*,video/*,application/pdf" onChange={handleFileSelect} style={{ display: 'none' }} />
+                      </label>
+                      <span style={{ fontSize: 11, color: '#9B96B0' }}>imagem ate 5MB · video ate 16MB</span>
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: 10, background: 'rgba(255,255,255,0.03)', borderRadius: 8, border: '1px solid rgba(255,255,255,0.1)' }}>
+                      {mediaMime.startsWith('image/') ? (
+                        <img src={mediaPreviewUrl} alt="preview" style={{ maxWidth: 120, maxHeight: 120, borderRadius: 6, objectFit: 'cover' }} />
+                      ) : mediaMime.startsWith('video/') ? (
+                        <video src={mediaPreviewUrl} style={{ maxWidth: 160, maxHeight: 120, borderRadius: 6 }} controls />
+                      ) : (
+                        <div style={{ width: 80, height: 80, background: '#2a2a3e', borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24 }}>📄</div>
+                      )}
+                      <div style={{ flex: 1, fontSize: 12 }}>
+                        <div style={{ fontWeight: 600, marginBottom: 2 }}>{mediaFilename}</div>
+                        <div style={{ color: '#9B96B0' }}>{mediaMime}</div>
+                        <div style={{ color: '#9B96B0', marginTop: 2 }}>
+                          ~{Math.round((mediaBase64.length * 0.75) / 1024)} KB
+                        </div>
+                      </div>
+                      <button className="btn btn-danger btn-sm btn-icon" onClick={clearMedia} title="Remover anexo"><X size={14} /></button>
+                    </div>
+                  )}
+                  {mediaError && <div style={{ fontSize: 11, color: '#FF6B6B', marginTop: 4 }}>{mediaError}</div>}
                 </div>
 
                 {/* Variacoes — minimo MIN_VARIATIONS - 1 = 2 */}
@@ -445,7 +529,20 @@ export default function Messages() {
                 {newTemplate && (
                   <div style={{ marginTop: 8, padding: 12, background: 'rgba(255,255,255,0.03)', borderRadius: 8, fontSize: 12 }}>
                     <div style={{ color: '#9B96B0', marginBottom: 4 }}>Preview (msg principal):</div>
-                    <div>{newTemplate.replace(/\{\{name\}\}/g, 'Joao Silva')}</div>
+                    {mediaPreviewUrl && mediaMime.startsWith('image/') && (
+                      <img src={mediaPreviewUrl} alt="preview" style={{ display: 'block', maxWidth: 220, maxHeight: 180, borderRadius: 6, marginBottom: 8 }} />
+                    )}
+                    <div style={{ whiteSpace: 'pre-wrap' }}>
+                      {newTemplate
+                        .replace(/\{\{nome\}\}/g, 'Joao Silva')
+                        .replace(/\{\{name\}\}/g, 'Joao Silva')
+                        .replace(/\{\{primeiro_nome\}\}/g, 'Joao')
+                        .replace(/\{\{first_name\}\}/g, 'Joao')
+                        .replace(/\{\{empresa\}\}/g, 'Empresa X')
+                        .replace(/\{\{cidade\}\}/g, 'Sua Cidade')
+                        .replace(/\{\{telefone\}\}/g, '(48) 99999-0000')
+                        .replace(/\{\{phone\}\}/g, '(48) 99999-0000')}
+                    </div>
                   </div>
                 )}
 

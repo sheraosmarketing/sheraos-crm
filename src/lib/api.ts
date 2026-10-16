@@ -65,6 +65,7 @@ export interface Broadcast {
   paused_at?: string | null; paused_reason?: string | null
   scheduled_at?: string | null
   started_at?: string | null; completed_at?: string | null; created_at: string; created_by_name?: string | null
+  media_base64?: string | null; media_mime?: string | null; media_filename?: string | null; media_url?: string | null
 }
 export interface BroadcastRecipient {
   id: number; broadcast_id: number; lead_id: number; phone: string
@@ -354,7 +355,7 @@ export const testWhatsAppConnection = (id: number, accountId: number) => apiFetc
 // Broadcasts
 export const fetchBroadcasts = (accountId: number) => apiFetch<{ broadcasts: Broadcast[] }>(`/api/broadcasts?account_id=${accountId}`).then(d => d.broadcasts)
 export const fetchBroadcast = (id: number, accountId: number) => apiFetch<{ broadcast: Broadcast; recipients: BroadcastRecipient[] }>(`/api/broadcasts/${id}?account_id=${accountId}`)
-export const createBroadcast = (accountId: number, data: { name: string; message_template: string; message_variations?: string[]; delay_seconds?: number; lead_ids: number[]; instance_id: number; scheduled_at?: string | null }) => apiFetch(`/api/broadcasts?account_id=${accountId}`, { method: 'POST', body: JSON.stringify(data) })
+export const createBroadcast = (accountId: number, data: { name: string; message_template: string; message_variations?: string[]; delay_seconds?: number; lead_ids: number[]; instance_id: number; scheduled_at?: string | null; media_base64?: string; media_mime?: string; media_filename?: string }) => apiFetch(`/api/broadcasts?account_id=${accountId}`, { method: 'POST', body: JSON.stringify(data) })
 export const sendBroadcast = (id: number, accountId: number) => apiFetch(`/api/broadcasts/${id}/send?account_id=${accountId}`, { method: 'POST' })
 export const resumeBroadcast = (id: number, accountId: number) => apiFetch(`/api/broadcasts/${id}/resume?account_id=${accountId}`, { method: 'POST' })
 export const cancelScheduledBroadcast = (id: number, accountId: number) => apiFetch<{ broadcast: Broadcast }>(`/api/broadcasts/${id}/cancel-schedule?account_id=${accountId}`, { method: 'POST' })
@@ -362,7 +363,7 @@ export const pauseBroadcast = (id: number, accountId: number) => apiFetch<{ broa
 export const cancelBroadcast = (id: number, accountId: number) => apiFetch<{ broadcast: Broadcast }>(`/api/broadcasts/${id}/cancel?account_id=${accountId}`, { method: 'POST' })
 export const deleteBroadcast = (id: number, accountId: number) => apiFetch(`/api/broadcasts/${id}?account_id=${accountId}`, { method: 'DELETE' })
 export interface BroadcastCloneData {
-  clone: { name: string; message_template: string; message_variations: string[]; media_url: string | null; delay_seconds: number; instance_id: number | null; leads: Lead[] }
+  clone: { name: string; message_template: string; message_variations: string[]; media_url: string | null; media_base64: string | null; media_mime: string | null; media_filename: string | null; delay_seconds: number; instance_id: number | null; leads: Lead[] }
   original: { total_count: number; valid_leads_now: number }
 }
 export const fetchBroadcastCloneData = (id: number, accountId: number) => apiFetch<BroadcastCloneData>(`/api/broadcasts/${id}/clone-data?account_id=${accountId}`)

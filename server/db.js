@@ -485,6 +485,9 @@ addColumnIfNotExists('broadcasts', 'instance_id', 'INTEGER REFERENCES whatsapp_i
 addColumnIfNotExists('broadcasts', 'paused_at', 'TEXT')
 addColumnIfNotExists('broadcasts', 'paused_reason', 'TEXT')
 addColumnIfNotExists('broadcasts', 'started_at', 'TEXT')
+addColumnIfNotExists('broadcasts', 'media_base64', 'TEXT')
+addColumnIfNotExists('broadcasts', 'media_mime', 'TEXT')
+addColumnIfNotExists('broadcasts', 'media_filename', 'TEXT')
 
 // Migracao: broadcasts.status CHECK precisa incluir 'cancelled' (botao Parar no UI).
 // SQLite nao permite ALTER CHECK — recria tabela. Idempotente: so roda se 'cancelled' nao for aceito.

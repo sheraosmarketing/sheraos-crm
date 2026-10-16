@@ -432,11 +432,31 @@ export async function sendViaInstance(instance, phone, text, opts = {}) {
   if (!opts.skipTyping) await simulateTyping(instance, phone, text)
 
   try {
-    const res = await fetch(`${instance.api_url}/message/sendText/${instance.instance_name}`, {
+    let endpoint, body
+    if (opts.media && opts.media.base64 && opts.media.mime) {
+      // Envio de midia com legenda. mediatype deduzido do mime (image/video/document/audio).
+      // text vira caption (preserva \n). Audio nao suporta caption no WhatsApp (ignora).
+      const mt = opts.media.mime.startsWith('image/') ? 'image'
+        : opts.media.mime.startsWith('video/') ? 'video'
+        : opts.media.mime.startsWith('audio/') ? 'audio'
+        : 'document'
+      endpoint = `${instance.api_url}/message/sendMedia/${encodeURIComponent(instance.instance_name)}`
+      body = {
+        number,
+        mediatype: mt,
+        media: opts.media.base64,
+        mimetype: opts.media.mime,
+        fileName: opts.media.fileName || `arquivo.${opts.media.mime.split('/')[1] || 'bin'}`,
+        caption: text || undefined,
+      }
+    } else {
+      endpoint = `${instance.api_url}/message/sendText/${encodeURIComponent(instance.instance_name)}`
+      body = { number, text }
+    }
+    const res = await fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'apikey': instance.api_key },
-      // delay:2000 removido — typing simulation ja cobre o tempo de "digitacao"
-      body: JSON.stringify({ number, text }),
+      body: JSON.stringify(body),
     })
     const data = await res.json().catch(() => ({}))
     if (!data.key?.id) {
