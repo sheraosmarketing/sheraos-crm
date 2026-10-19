@@ -55,7 +55,7 @@ export interface DashboardStats {
   daily: { date: string; count: number }[]
 }
 export interface AgentStat { id: number; name: string; is_active: number; leads_period: number; leads_total: number; conversions: number }
-export interface WhatsAppInstance { id: number; account_id: number; instance_name: string; display_name?: string | null; api_url: string; api_key: string; status: string; phone_number: string | null; qr_code: string | null; default_attendant_id: number | null; lead_intake_mode?: 'open' | 'restricted'; first_msg_template?: string | null }
+export interface WhatsAppInstance { id: number; account_id: number; instance_name: string; display_name?: string | null; api_url: string; api_key: string; status: string; phone_number: string | null; qr_code: string | null; default_attendant_id: number | null; lead_intake_mode?: 'open' | 'restricted'; first_msg_template?: string | null; forward_notif_enabled?: number; forward_notif_via_instance_id?: number | null; forward_notif_to_phone?: string | null }
 export const instanceLabel = (i: Pick<WhatsAppInstance, 'display_name' | 'instance_name'>) => (i.display_name && i.display_name.trim()) || i.instance_name
 export const renameWhatsAppInstanceLabel = (id: number, accountId: number, label: string) => apiFetch<{ instance: WhatsAppInstance }>(`/api/integrations/whatsapp/${id}/label?account_id=${accountId}`, { method: 'PUT', body: JSON.stringify({ label }) }).then(d => d.instance)
 export interface Broadcast {
@@ -161,6 +161,24 @@ export const blockLead = (id: number) => apiFetch<{ lead: Lead }>(`/api/leads/${
 export const unblockLead = (id: number) => apiFetch<{ lead: Lead }>(`/api/leads/${id}/unblock`, { method: 'POST' }).then(d => d.lead)
 export const fetchArchivedCount = (accountId: number) => apiFetch<{ count: number; withActivity: number }>(`/api/leads/archived-count?account_id=${accountId}`)
 export const fetchLeadSources = (accountId: number) => apiFetch<{ sources: string[] }>(`/api/leads/sources?account_id=${accountId}`).then(d => d.sources)
+
+// ─── Forward Notification Config ───────────────────────────────────
+export interface ForwardConfig {
+  enabled: boolean
+  via_instance_id: number | null
+  to_phone: string | null
+  label: string | null
+  move_to_stage_id: number | null
+}
+export interface GlobalConnectedInstance {
+  id: number; instance_name: string; display_name: string | null; phone_number: string | null; account_id: number; account_name: string | null
+}
+export const fetchForwardConfig = (instanceId: number, accountId: number) =>
+  apiFetch<ForwardConfig>(`/api/integrations/whatsapp/${instanceId}/forward-config?account_id=${accountId}`)
+export const saveForwardConfig = (instanceId: number, accountId: number, data: ForwardConfig) =>
+  apiFetch<ForwardConfig>(`/api/integrations/whatsapp/${instanceId}/forward-config?account_id=${accountId}`, { method: 'PUT', body: JSON.stringify(data) })
+export const fetchGlobalConnectedInstances = (accountId: number) =>
+  apiFetch<{ instances: GlobalConnectedInstance[] }>(`/api/integrations/whatsapp-global-connected?account_id=${accountId}`).then(d => d.instances)
 export interface LeadConversation { instance_id: number; instance_name: string; status: string; attendant_id: number | null; attendant_name: string | null; msg_count: number; last_msg_at: string | null }
 export const fetchLeadConversations = (leadId: number, accountId: number) => apiFetch<{ conversations: LeadConversation[] }>(`/api/leads/${leadId}/conversations?account_id=${accountId}`).then(d => d.conversations)
 

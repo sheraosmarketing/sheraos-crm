@@ -468,6 +468,72 @@ router.put('/whatsapp/:id/label', requireRole('super_admin', 'gerente'), (req, r
   res.json({ instance: updated })
 })
 
+// ─── Forward Notification: config por instancia ───────────────────
+// Quando lead responde nessa instancia, dispara msg de alerta pra outro telefone (via outra instancia).
+// Caso: lead responde no numero de disparos -> dono recebe no celular pelo numero de atendimento.
+router.get('/whatsapp/:id/forward-config', requireRole('super_admin', 'gerente'), (req, res) => {
+  const instance = getOwnedInstance(req, res)
+  if (!instance) return
+  res.json({
+    enabled: !!instance.forward_notif_enabled,
+    via_instance_id: instance.forward_notif_via_instance_id,
+    to_phone: instance.forward_notif_to_phone,
+    label: instance.forward_notif_label,
+    move_to_stage_id: instance.forward_notif_move_to_stage_id,
+  })
+})
+
+router.put('/whatsapp/:id/forward-config', requireRole('super_admin', 'gerente'), (req, res) => {
+  const instance = getOwnedInstance(req, res)
+  if (!instance) return
+  const { enabled, via_instance_id, to_phone, label, move_to_stage_id } = req.body || {}
+  const en = enabled ? 1 : 0
+  if (en) {
+    if (!via_instance_id) return res.status(400).json({ error: 'via_instance_id obrigatorio quando ativo' })
+    if (!to_phone) return res.status(400).json({ error: 'to_phone obrigatorio quando ativo' })
+    const via = db.prepare('SELECT id FROM whatsapp_instances WHERE id = ?').get(via_instance_id)
+    if (!via) return res.status(400).json({ error: 'via_instance_id invalida' })
+    if (move_to_stage_id) {
+      const stg = db.prepare('SELECT id FROM funnel_stages WHERE id = ?').get(move_to_stage_id)
+      if (!stg) return res.status(400).json({ error: 'move_to_stage_id invalida' })
+    }
+  }
+  const phoneDigits = to_phone ? String(to_phone).replace(/\D/g, '') : null
+  if (phoneDigits && (phoneDigits.length < 10 || phoneDigits.length > 15)) {
+    return res.status(400).json({ error: 'to_phone invalido (10-15 digitos)' })
+  }
+  db.prepare(`
+    UPDATE whatsapp_instances SET
+      forward_notif_enabled = ?,
+      forward_notif_via_instance_id = ?,
+      forward_notif_to_phone = ?,
+      forward_notif_label = ?,
+      forward_notif_move_to_stage_id = ?,
+      updated_at = datetime('now')
+    WHERE id = ?
+  `).run(en, via_instance_id || null, phoneDigits, label || null, move_to_stage_id || null, instance.id)
+  const updated = db.prepare('SELECT * FROM whatsapp_instances WHERE id = ?').get(instance.id)
+  res.json({
+    enabled: !!updated.forward_notif_enabled,
+    via_instance_id: updated.forward_notif_via_instance_id,
+    to_phone: updated.forward_notif_to_phone,
+    label: updated.forward_notif_label,
+    move_to_stage_id: updated.forward_notif_move_to_stage_id,
+  })
+})
+
+// Lista instancias CONECTADAS de TODAS as contas (super_admin only) — dropdown pra escolher "via"
+router.get('/whatsapp-global-connected', requireRole('super_admin'), (req, res) => {
+  const rows = db.prepare(`
+    SELECT w.id, w.instance_name, w.display_name, w.phone_number, w.account_id, a.name as account_name
+    FROM whatsapp_instances w
+    LEFT JOIN accounts a ON a.id = w.account_id
+    WHERE w.status = 'connected'
+    ORDER BY a.name, w.instance_name
+  `).all()
+  res.json({ instances: rows })
+})
+
 // ─── Test connection (legacy, kept for compatibility) ────────────
 router.post('/whatsapp/:id/test', requireRole('super_admin', 'gerente', 'atendente'), async (req, res) => {
   const instance = getOwnedInstance(req, res)

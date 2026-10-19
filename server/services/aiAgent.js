@@ -8,6 +8,7 @@ import { broadcastSSE } from '../sse.js'
 import { pickFromRoulette as rouletteUtil } from './roulette.js'
 import { notifyAndOpenLead, sendViaInstance, markMessageAsRead } from './leadHandoff.js'
 import { transcribeAudio, fetchAudioBuffer } from './deepgramClient.js'
+import { maybeForwardInbound } from './forwardNotif.js'
 
 // ─── Helpers ──────────────────────────────────────────────────────────
 
@@ -429,6 +430,11 @@ async function executeTool(toolUse, agent, lead, instanceId, availableTags, avai
 // ─── processInboundMessage ────────────────────────────────────────────
 
 export async function processInboundMessage(lead, msgContent, mediaType, instanceId, _opts = {}) {
+  // Fire-and-forget: encaminha notificacao pro telefone configurado (se instancia tem forward on).
+  // Roda independente do bot AI; se nao tem config, maybeForwardInbound retorna sem fazer nada.
+  if (lead && instanceId) {
+    maybeForwardInbound({ lead, instanceId, content: msgContent, mediaType }).catch(e => console.error('[Forward] err:', e.message))
+  }
   try {
     console.log(`[AI Agent DEBUG] processInboundMessage chamado lead=${lead?.id} instance=${instanceId} mediaType=${mediaType} content="${(msgContent||'').substring(0,30)}"`)
     // 1. Encontra agente (respeita todos os filtros — bloqueios sao reportados pelo diagnoseForceAi na rota)

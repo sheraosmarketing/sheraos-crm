@@ -11,8 +11,9 @@ import {
   instanceLabel, renameWhatsAppInstanceLabel,
   type WhatsAppInstance, type User as UserType, type Account, type Tag, type TagInstanceMapping,
 } from '../lib/api'
-import { Plug, Plus, Wifi, WifiOff, Loader, Trash2, QrCode, Power, PowerOff, RefreshCw, Smartphone, Save, Check, Settings, FileSpreadsheet, Copy, Webhook, RotateCw, Download, User, Eye, EyeOff, Activity, AlertTriangle, MessageSquare, Link as LinkIcon, GitBranch, Edit2 } from 'lucide-react'
+import { Plug, Plus, Wifi, WifiOff, Loader, Trash2, QrCode, Power, PowerOff, RefreshCw, Smartphone, Save, Check, Settings, FileSpreadsheet, Copy, Webhook, RotateCw, Download, User, Eye, EyeOff, Activity, AlertTriangle, MessageSquare, Link as LinkIcon, GitBranch, Edit2, Bell } from 'lucide-react'
 import InstanceAutoMessagesModal from '../components/InstanceAutoMessagesModal'
+import ForwardNotifModal from '../components/ForwardNotifModal'
 import { BlockedBanner } from '../components/BlockedBanner'
 import { parseSqlDate } from '../lib/dates'
 
@@ -263,6 +264,7 @@ export default function Integrations() {
 
   const [restarting, setRestarting] = useState<number | null>(null)
   const [autoMsgInstance, setAutoMsgInstance] = useState<WhatsAppInstance | null>(null)
+  const [forwardNotifInstance, setForwardNotifInstance] = useState<WhatsAppInstance | null>(null)
   const [sheetsLastAt, setSheetsLastAt] = useState<string | null>(null)
   const [sheetsDefaultTagId, setSheetsDefaultTagId] = useState<number | null>(null)
   const [sheetsTagSaving, setSheetsTagSaving] = useState(false)
@@ -575,6 +577,14 @@ export default function Integrations() {
                               title="Configurar saudacao, ausencia e inatividade"
                             >
                               <MessageSquare size={12} /> Auto-mensagens
+                            </button>
+                            <button
+                              className="btn btn-secondary btn-sm"
+                              onClick={() => setForwardNotifInstance(inst)}
+                              title="Encaminhar alerta pra outro telefone quando lead responder nesta instancia"
+                              style={inst.forward_notif_enabled ? { color: '#FBBC04', borderColor: '#FBBC04' } : undefined}
+                            >
+                              <Bell size={12} /> Alertas {inst.forward_notif_enabled ? '✓' : ''}
                             </button>
                             <button className="btn btn-secondary btn-sm" onClick={() => handleDisconnect(inst)}><PowerOff size={12} /> Desconectar</button>
                           </>
@@ -1267,6 +1277,15 @@ function onChange(e) {
           instance={autoMsgInstance}
           accountId={accountId}
           onClose={() => setAutoMsgInstance(null)}
+        />
+      )}
+
+      {/* Forward Notifications Modal */}
+      {forwardNotifInstance && accountId && (
+        <ForwardNotifModal
+          instance={forwardNotifInstance}
+          accountId={accountId}
+          onClose={() => { setForwardNotifInstance(null); load() }}
         />
       )}
 

@@ -489,6 +489,14 @@ addColumnIfNotExists('broadcasts', 'media_base64', 'TEXT')
 addColumnIfNotExists('broadcasts', 'media_mime', 'TEXT')
 addColumnIfNotExists('broadcasts', 'media_filename', 'TEXT')
 
+// Forward notification: quando lead responde numa instancia, notifica outro telefone
+// (ex: Pousada Di Venezia - lead responde no numero de disparos, celular do dono recebe alerta)
+addColumnIfNotExists('whatsapp_instances', 'forward_notif_enabled', 'INTEGER NOT NULL DEFAULT 0')
+addColumnIfNotExists('whatsapp_instances', 'forward_notif_via_instance_id', 'INTEGER')
+addColumnIfNotExists('whatsapp_instances', 'forward_notif_to_phone', 'TEXT')
+addColumnIfNotExists('whatsapp_instances', 'forward_notif_label', 'TEXT')
+addColumnIfNotExists('whatsapp_instances', 'forward_notif_move_to_stage_id', 'INTEGER')
+
 // Migracao: broadcasts.status CHECK precisa incluir 'cancelled' (botao Parar no UI).
 // SQLite nao permite ALTER CHECK — recria tabela. Idempotente: so roda se 'cancelled' nao for aceito.
 try {
