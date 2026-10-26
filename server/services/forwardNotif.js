@@ -48,7 +48,9 @@ export async function maybeForwardInbound({ lead, instanceId, content, mediaType
 
     const via = db.prepare('SELECT * FROM whatsapp_instances WHERE id = ?').get(receiver.forward_notif_via_instance_id)
     if (!via) { console.warn(`[Forward] via_instance_id=${receiver.forward_notif_via_instance_id} nao existe`); return }
-    if (via.status !== 'connected') {
+    // silence_warning conta como conectada (precaucao do detector de silencio, nao e queda real)
+    const okStatuses = ['connected', 'silence_warning', 'connecting']
+    if (!okStatuses.includes(via.status)) {
       console.warn(`[Forward] via_instance ${via.instance_name} nao conectada (status=${via.status})`)
       return
     }
