@@ -836,7 +836,7 @@ async function checkInstanceSilence() {
         newStatus = 'silence_warning'
       } else {
         kind = 'NATURAL_SILENCE'  // Baileys open, Evolution tb silenciosa -> conta de baixo volume
-        newStatus = 'silence_warning'  // aviso amarelo, nao vermelho
+        newStatus = 'connected'  // conta ok, so sem movimento. Nao rebaixa UI.
       }
 
       console.warn(`[InstanceSilence] ⚠️  ${inst.account_name}/${inst.instance_name}: sem msgs ha ${hoursSince.toFixed(1)}h (Evolution msgs: ${evoHoursSince == null ? 'N/A' : evoHoursSince.toFixed(1) + 'h'}, state: ${evoState || 'unreachable'}) — motivo=${kind} -> status=${newStatus}`)
