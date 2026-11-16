@@ -31,6 +31,23 @@ export function templateNeedsAttendant(template) {
   return s.includes('{{atendente}}') || s.includes('{{atendente_nome}}')
 }
 
+// Resolve spintax inline tipo {oi|ola|e ai} escolhendo um dos termos aleatoriamente.
+// Suporta aninhamento ate 4 niveis: {ei {joao|jose}|opa}. Placeholders {{...}}
+// (duas chaves) NAO sao tocados porque o regex exige um pipe '|' dentro.
+export function resolveSpintax(text) {
+  if (!text || typeof text !== 'string') return text
+  let out = text
+  for (let i = 0; i < 4; i++) {
+    const prev = out
+    out = out.replace(/\{([^{}|]*\|[^{}]*)\}/g, (_, group) => {
+      const parts = group.split('|')
+      return parts[Math.floor(Math.random() * parts.length)]
+    })
+    if (out === prev) break
+  }
+  return out
+}
+
 // Helper: constroi VarContext a partir do lead + attendant (rows do DB).
 export function buildVarContext(lead, attendant) {
   return {

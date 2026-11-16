@@ -1,7 +1,7 @@
 import fetch from 'node-fetch'
 import db from './db.js'
 import { broadcastSSE } from './sse.js'
-import { resumeBroadcastIfPaused, runBroadcastLoop } from './routes/broadcasts.js'
+import { resumeBroadcastIfPaused, runBroadcastLoop, resumeBroadcastsIfQuietHoursOpened } from './routes/broadcasts.js'
 import { sendFollowUpMessage, resumeFollowUpsIfPaused, resumeFollowUpsIfAttendantNowAssigned } from './services/followUpSender.js'
 import { processInactivityFollowUps } from './services/inactivityScanner.js'
 import { triggerCapiForStageChange } from './services/metaCapi.js'
@@ -642,6 +642,8 @@ async function tick() {
       processFollowUps(),
       processInactivityFollowUps(),
     ])
+    // Anti-ban: retoma broadcasts pausados por quiet_hours quando volta pra janela 9-21h BRT.
+    try { resumeBroadcastsIfQuietHoursOpened() } catch (e) { console.error('[QuietHours] resume error:', e.message) }
     cleanupStaleQRCodes()
     // Re-register webhooks every tick to prevent stale webhooks
     await reRegisterWebhooks()

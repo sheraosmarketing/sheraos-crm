@@ -4,12 +4,39 @@ import db from '../db.js'
 import { requireRole } from '../middleware/auth.js'
 import { broadcastSSE } from '../sse.js'
 import { sendViaInstance, checkWhatsAppNumbersBulk } from '../services/leadHandoff.js'
+import { resolveSpintax } from '../lib/messageVars.js'
 
 const router = Router()
 
 const MIN_VARIATIONS = 3 // total messages: principal + 2 variations minimum
 const MIN_DELAY_SECONDS = 8
 const DEFAULT_DELAY_SECONDS = 15
+
+// ─── Anti-ban: janela de horario pra broadcasts (mais restrita que business_hours).
+// Fora disso o broadcast auto-pausa com paused_reason='quiet_hours'. Scheduler retoma 9h.
+// Horario em BRT (America/Sao_Paulo, UTC-3). Fuso fixo pra evitar surpresa com DST.
+const BROADCAST_HOUR_START_BRT = 9
+const BROADCAST_HOUR_END_BRT = 21
+
+function isInBroadcastHours(now = new Date()) {
+  const hourBRT = (now.getUTCHours() - 3 + 24) % 24
+  return hourBRT >= BROADCAST_HOUR_START_BRT && hourBRT < BROADCAST_HOUR_END_BRT
+}
+
+// Jitter MAIS agressivo que o padrao do CRM. baseDelay x [1.0, 2.0].
+// 15min configurado => real entre 15 e 30min.
+function broadcastJitter(baseDelayMs) {
+  const mult = 1.0 + Math.random()  // 1.0x a 2.0x
+  return Math.round(baseDelayMs * mult)
+}
+
+// Micro-pausa aleatoria entre envios: a cada 15-30 msgs, pausa extra de 3-10 min.
+function pickMicroPauseEvery() {
+  return 15 + Math.floor(Math.random() * 16)  // 15..30
+}
+function pickMicroPauseMs() {
+  return Math.round((3 + Math.random() * 7) * 60 * 1000)  // 3..10 min
+}
 
 // List broadcasts
 router.get('/', requireRole('super_admin', 'gerente'), (req, res) => {
@@ -213,6 +240,11 @@ async function runBroadcastLoopInner(broadcastId) {
   // Usa offset baseado em sent_count + failed_count pra continuar de onde parou
   let processedCount = (broadcast.sent_count || 0) + (broadcast.failed_count || 0)
 
+  // Anti-ban: contador de envios DESTA sessao (nao reseta em retomada — proposito)
+  // + proximo "cafezinho" aleatorio (15-30 msgs).
+  let sessionSendCount = 0
+  let microPauseEvery = pickMicroPauseEvery()
+
   // ─── Pre-flight bulk: valida TODOS os recipients pendentes de uma vez no inicio.
   // Numeros que nao tem WhatsApp viram 'failed' direto sem nem tentar sendText.
   // Funciona SO se for o primeiro start do broadcast (sem retomada parcial). Em retomada
@@ -251,6 +283,15 @@ async function runBroadcastLoopInner(broadcastId) {
       return
     }
 
+    // Anti-ban: janela de horario (9-21h BRT). Fora, auto-pausa.
+    if (!isInBroadcastHours()) {
+      const reason = `quiet_hours (fora ${BROADCAST_HOUR_START_BRT}h-${BROADCAST_HOUR_END_BRT}h BRT)`
+      db.prepare("UPDATE broadcasts SET paused_at = datetime('now'), paused_reason = ? WHERE id = ?").run(reason, broadcastId)
+      broadcastSSE(broadcast.account_id, 'broadcast:paused', { id: broadcastId, reason })
+      console.log(`[Broadcast ${broadcastId}] auto-pausa por quiet_hours`)
+      return
+    }
+
     // Re-checa instancia conectada antes de cada envio
     const liveInstance = db.prepare('SELECT * FROM whatsapp_instances WHERE id = ?').get(broadcast.instance_id)
     if (!liveInstance || liveInstance.status !== 'connected') {
@@ -266,9 +307,10 @@ async function runBroadcastLoopInner(broadcastId) {
 
     try {
       const lead = db.prepare('SELECT name, phone, empresa, city FROM leads WHERE id = ?').get(r.lead_id)
-      const template = allTemplates[processedCount % allTemplates.length]
+      // Random template em vez de sequencial — fingerprint mais dificil de detectar.
+      const template = allTemplates[Math.floor(Math.random() * allTemplates.length)]
       const firstName = (lead?.name || '').split(' ')[0] || ''
-      const text = String(template)
+      let text = String(template)
         .replace(/\{\{name\}\}/g, lead?.name || 'Cliente')
         .replace(/\{\{nome\}\}/g, lead?.name || 'Cliente')
         .replace(/\{\{primeiro_nome\}\}/g, firstName || 'Cliente')
@@ -277,6 +319,8 @@ async function runBroadcastLoopInner(broadcastId) {
         .replace(/\{\{cidade\}\}/g, lead?.city || '')
         .replace(/\{\{phone\}\}/g, lead?.phone || '')
         .replace(/\{\{telefone\}\}/g, lead?.phone || '')
+      // Spintax inline {oi|ola|e ai} — expande DEPOIS dos placeholders {{...}}.
+      text = resolveSpintax(text)
       // skipValidation=true porque o pre-flight bulk ja rodou antes do while.
       // leadId pra cap por lead/dia. media (se tiver) vai como anexo + caption=text.
       const mediaOpt = (broadcast.media_base64 && broadcast.media_mime) ? {
@@ -307,12 +351,22 @@ async function runBroadcastLoopInner(broadcastId) {
       processedCount++
     }
 
-    // Anti-ban: jitter +30% sobre o baseDelay configurado (nunca pra menos).
-    // baseDelay configurado eh o MINIMO. Real fica entre 1.0x e 1.3x.
-    // Ex: user configura 100s → real fica entre 100s e 130s.
-    const jitterMult = 1.0 + Math.random() * 0.3  // 1.0x a 1.3x (sempre >= baseDelay)
-    const jitter = Math.round(baseDelay * jitterMult)
+    // Anti-ban: jitter de +100% sobre baseDelay. Real fica entre 1.0x e 2.0x.
+    // baseDelay configurado eh o MINIMO. Delay previsivel = padrao de bot = ban.
+    // Ex: user configura 900s (15min) → real fica entre 900s (15min) e 1800s (30min).
+    const jitter = broadcastJitter(baseDelay)
     await new Promise(resolve => setTimeout(resolve, jitter))
+
+    // Anti-ban: micro-pausa ("cafezinho") a cada 15-30 envios. Simula humano
+    // que para pra almocar, atender telefone, etc. 3-10 min aleatorios extra.
+    sessionSendCount++
+    if (sessionSendCount >= microPauseEvery) {
+      const pauseMs = pickMicroPauseMs()
+      console.log(`[Broadcast ${broadcastId}] micro-pausa ${(pauseMs / 60000).toFixed(1)}min apos ${sessionSendCount} envios nesta sessao`)
+      sessionSendCount = 0
+      microPauseEvery = pickMicroPauseEvery()
+      await new Promise(resolve => setTimeout(resolve, pauseMs))
+    }
   }
 
   // Concluido
@@ -344,12 +398,34 @@ router.post('/:id/send', requireRole('super_admin', 'gerente'), async (req, res)
   runBroadcastLoop(broadcast.id).catch(err => console.error('[Broadcast] Loop error:', err))
 })
 
-// Retoma broadcast pausado (usado pelo scheduler quando instancia reconecta)
+// Retoma broadcast pausado (usado pelo scheduler quando instancia reconecta).
+// So retoma pausas por instancia desconectada — quiet_hours tem retomada propria.
 export function resumeBroadcastIfPaused(instanceId) {
-  const paused = db.prepare("SELECT * FROM broadcasts WHERE instance_id = ? AND status = 'sending' AND paused_at IS NOT NULL").all(instanceId)
+  const paused = db.prepare(`
+    SELECT * FROM broadcasts
+    WHERE instance_id = ? AND status = 'sending' AND paused_at IS NOT NULL
+      AND (paused_reason IS NULL OR paused_reason NOT LIKE 'quiet_hours%')
+  `).all(instanceId)
   for (const b of paused) {
     console.log(`[Broadcast] Retomando disparo "${b.name}" (id=${b.id}) — instancia ${instanceId} reconectou`)
     runBroadcastLoop(b.id).catch(err => console.error('[Broadcast] Resume error:', err))
+  }
+}
+
+// Retoma broadcasts pausados por quiet_hours quando entra na janela de 9h-21h BRT.
+// Chamado pelo scheduler periodicamente. Idempotente.
+export function resumeBroadcastsIfQuietHoursOpened() {
+  if (!isInBroadcastHours()) return
+  const paused = db.prepare(`
+    SELECT b.* FROM broadcasts b
+    JOIN whatsapp_instances w ON w.id = b.instance_id
+    WHERE b.status = 'sending' AND b.paused_at IS NOT NULL
+      AND b.paused_reason LIKE 'quiet_hours%'
+      AND w.status = 'connected'
+  `).all()
+  for (const b of paused) {
+    console.log(`[Broadcast] Quiet hours encerrou — retomando "${b.name}" (id=${b.id})`)
+    runBroadcastLoop(b.id).catch(err => console.error('[Broadcast] QuietHours resume error:', err))
   }
 }
 
