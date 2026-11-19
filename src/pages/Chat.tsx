@@ -353,6 +353,11 @@ export default function Chat() {
     }
   }, [selectedLeadId]))
   useSSE('lead:unarchived', useCallback(() => loadLeadsList(), [loadLeadsList]))
+  // Ao voltar pra aba, forca refetch da lista + do lead aberto (SSE pode ter perdido eventos enquanto suspenso)
+  useSSE('leads:resync', useCallback(() => {
+    loadLeadsList()
+    if (selectedLeadId) loadLead({ silent: true })
+  }, [loadLeadsList, loadLead, selectedLeadId]))
 
   // Pedido de transferencia recebido — filtra por mim e mostra modal de aceite
   useSSE('lead:transfer-requested', useCallback((data: TransferRequest) => {
